@@ -87,42 +87,94 @@ function get_chunk_pollution (surface, cx, cy)
 	return pollution
 end
 
+function new_chunk ()
+	local c = 
+	{
+		pollution = nil, 
+		h={}, -- horizontal top values
+		v={}, -- vertical left values
+		point_ids={}, -- 
+		line_ids={}, -- 
+		polygon_ids={}, -- 
+	}
+	return c
+end
+
 function get_udata (surface, cx, cy)
+	-- udata is vanilla values
 	local udata = {}
 	for i=1, 3 do -- as y
 		for j=1, 3 do -- as x
-			udata[j]=udata[j]or{}
-			udata[j][i]=get_chunk_pollution (surface, cx+j-2, cy+i-2) -- from cx-1 to cx+1
+			local cx1 = cx+j-2
+			local cy1 = cy+i-2
+			local pollution
+			if (i==2 and j==2) then
+				global.chunks[cx1]=global.chunks[cx1]or{}
+				global.chunks[cx1][cy1]=global.chunks[cx1][cy1]or new_chunk ()
+				global.chunks[cx1][cy1].pollution=pollution
+				pollution = get_chunk_pollution (surface, cx1, cy1) -- from cx-1 to cx+1
+				global.chunks[cx1][cy1].pollution=pollution
+				udata[j]=udata[j]or{}
+				udata[j][i]=pollution
+			elseif not (global.chunks[cx1] 
+				and global.chunks[cx1][cy1]
+				and global.chunks[cx1][cy1].pollution) then
+				
+				pollution = get_chunk_pollution (surface, cx1, cy1)
+--				game.print('added chunk: '..cx1..' '..cy1..' '..pollution)
+				global.chunks[cx1]=global.chunks[cx1]or{}
+				global.chunks[cx1][cy1]=global.chunks[cx1][cy1]or new_chunk ()
+				global.chunks[cx1][cy1].pollution=pollution
+				udata[j]=udata[j]or{}
+				udata[j][i]=pollution
+			else
+				pollution=global.chunks[cx1][cy1].pollution
+				udata[j]=udata[j]or{}
+				udata[j][i]=pollution
+			end
+
 		end
 	end
 	return udata
 end
 
-function get_data (surface, udata, cx, cy)
-	local data = {}
+function set_data (surface, udata, cx, cy)
+--	local data = {}
+	local chunks = global.chunks
 	local color = {0,1,0}
-	for i=1, 2 do
-		data[i]={}
-		for j=1, 2 do
-			
+	for i=1, 2 do -- as y (or not)
+--		data[i]={}
+		for j=1, 2 do -- as x (or not)
+			local cx1 = cx+j-1
+			local cy1 = cy+i-1
+			local x = cx1*32+16
+			local y = cy1*32+16
 			local value = (udata[i][j]+udata[i+1][j]+udata[i][j+1]+udata[i+1][j+1])/4
-			data[i][j]=value
-			rendering.draw_text{text=value, surface=surface, target={(cx+j-2)*32,(cy+i-2)*32}, color=color, time_to_live=time_to_live}
+--			data[i][j]=value
+			rendering.draw_text{text=value, surface=surface, target={x,y}, 
+				color=color, time_to_live=time_to_live}
+			chunks[cx1][cy1].vertex_pollution = value
+--			game.print ('chunks cx1'..cx1..' cy1'..cy1..' value'..value)
 		end
 	end
-	return data
+--	return data
 end
 
 function get_levels ()
 	local levels = {}
---	for level = 0, 1000, 10 do
---		levels[#levels+1]=level
---	end
 	levels[#levels+1]=0
 	levels[#levels+1]=0.1
 	local k = 10^(1/10)
 	for i = 1, 1000 do
-		levels[#levels+1]=k^i
+		local level =k^i
+		if (level > 10) then
+			if (level < 100) then
+				level = math.floor ((level+0.5)*10)/10
+			else
+				level = math.floor ((level+0.5))
+			end
+		end
+		levels[#levels+1] = level
 	end
 	return levels
 end
@@ -142,94 +194,157 @@ function as (a, b)
 	return (math.floor (a*1000) == math.floor (b*1000)) and true or false
 end
 
-function genMPoints(data, levels, cx, cy)
+function genMPoints(levels, cx, cy)
+--	game.print ('cy:'..cy)
+	local chunks = global.chunks
+	local a = chunks[cx][cy].vertex_pollution
+	local b = chunks[cx][cy+1].vertex_pollution
+	local c = chunks[cx+1][cy+1].vertex_pollution
+	local d = chunks[cx+1][cy].vertex_pollution
+	local e = (a+b+c+d)/4
 	local tileSize = 32
 	local mpoints = {}
-	local a,b,c,d  = data[1][1], data[2][1], data[2][2], data[1][2]
-	local e = (a+b+c+d)/4
+	
+	-- mpoints saved; AB and DA are saved in the chunk A
+	-- mpoints BC are saved in chunk cx+1,cy; vertical
+	-- mpoints CD are saved in chunk cx,cy+1; horizontal
+	local side_a, side_b, side_c, side_d = {}, {}, {}, {}
 	for k, level in pairs (levels) do
-		mpoints[level]={}
-		local m = mpoints[level]
+		-- mpoints or m - points on the chunk edges; two, three or four
+		local m = {}
 		
+		-- point pA on the chunk side AB
 		local xa = cx*tileSize+tileSize*(level-a)/(b-a)
 		local ya = cy*tileSize
 		if in_range (xa, cx*tileSize) and in_range (ya, cy*tileSize) then
-			table.insert (mpoints[level], xa)
-			table.insert (mpoints[level], ya)
+			local mpoint = {x=xa, y=ya, side='a', value=level}
+			table.insert (m, mpoint)
+			table.insert (side_a, mpoint)
 		end
 		
-		local xb = cx*tileSize+tileSize
+		-- point pB on the chunk side BC
+		local xb = (cx+1)*tileSize
 		local yb = cy*tileSize+tileSize*(level-b)/(c-b)
-		if not (as(m[#m-1],xb) and as(m[#m],yb)) then
-			if in_range (xb, cx*tileSize) and in_range (yb, cy*tileSize) then
-				table.insert (m, xb)
-				table.insert (m, yb)
-			end
-		elseif #m>2 then
-			print ('b double: '..level)
-			table.insert (m, 1, xb)
-			table.insert (m, 2, yb)
+		if in_range (xb, cx*tileSize) and in_range (yb, cy*tileSize) then
+			local mpoint = {x=xb, y=yb, side='b', value=level}
+			table.insert (m, mpoint)
+			table.insert (side_b, mpoint)
 		end
 		
+		-- point pC on the chunk side CD
 		local xc = cx*tileSize+tileSize - tileSize*(level-c)/(d-c)
 		local yc = cy*tileSize+tileSize
-		if not (as(m[#m-1],xc) and as(m[#m],yc)) then
-			if in_range (xc, cx*tileSize) and in_range (yc, cy*tileSize) then
-				table.insert (m, xc)
-				table.insert (m, yc)
-			end
-		elseif #m>2 then
-			print ('c double: '..level)
-			table.insert (m, 1, xc)
-			table.insert (m, 2, yc)
+		if in_range (xc, cx*tileSize) and in_range (yc, cy*tileSize) then
+			local mpoint = {x=xc, y=yc, side='c', value=level}
+			table.insert (m, mpoint)
+			table.insert (side_c, mpoint)
 		end
 		
+		-- point pD on the chunk side DA
 		local xd = cx*tileSize
 		local yd = cy*tileSize+tileSize - tileSize*(level-d)/(a-d)
---		print ('yd:'..yd)
-		if not (as(m[#m-1],xd) and as(m[#m],yd)) then
-			if in_range (xd, cx*tileSize) and in_range (yd, cy*tileSize) then
-				table.insert (m, xd)
-				table.insert (m, yd)
-			end
-		elseif #m>2 then
-			print ('d double: '..level)
-			table.insert (m, 1, xd)
-			table.insert (m, 2, yd)
-		end
-		
-		if #m>2 then
-			print (level..': ' .. #m)
-			print (unpack(m))
+		if in_range (xd, cx*tileSize) and in_range (yd, cy*tileSize) then
+			local mpoint = {x=xd, y=yd, side='d', value=level}
+			table.insert (m, mpoint)
+			table.insert (side_d, mpoint)
 		end
 	end
+	
+	
+	chunks[cx][cy].h=side_a
+	chunks[cx+1][cy].v=side_b
+	chunks[cx][cy+1].h=side_c
+	chunks[cx][cy].v=side_d
+	
 	return mpoints
 end
 
-function drawMPoints(surface, mpoints)
+
+
+function drawMPoints(surface, cx, cy)
 	local color = {1,1,1}
-	for name, points in pairs (mpoints) do
---		love.graphics.points(points)
-		for j = 1, #points-1, 2 do
-			local x = points[j]
-			local y = points[j+1]
---			love.graphics.print(name, x-3,y-9, -math.pi/4)
+	local chunks = global.chunks
+	local a = chunks[cx][cy].h
+	local b = chunks[cx+1][cy].v
+	local c = chunks[cx][cy+1].h
+	local d = chunks[cx][cy].v
+	for i, side in pairs ({a,b,c,d}) do
+		for i, point in pairs (side) do
+			local x = point.x
+			local y = point.y
+			local value = point.value
 			rendering.draw_circle{color=color, radius=0.25, surface=surface, target={x,y}, time_to_live=time_to_live}
-			rendering.draw_text{text=name, surface=surface, target={x,y}, color=color, time_to_live=time_to_live}
+			rendering.draw_text{text=value, surface=surface, target={x,y}, color=color, time_to_live=time_to_live}
 		end
 	end
 end
 
-function drawLines(surface, mpoints)
-	local color = {0,1,1}
-	for name, points in pairs (mpoints) do
-		if #points == 4 then
-			local x  = points[1]
-			local y  = points[2]
-			local x1 = points[3]
-			local y1 = points[4]
-			rendering.draw_line{color=color, width=1, surface=surface, from={x,y}, to={x1, y1}, time_to_live=time_to_live}
+
+function genMLines (cx, cy, levels)
+	local chunks = global.chunks
+	if not (chunks[cx+1] and chunks[cx+1][cy] and chunks[cx][cy+1]) then return end
+	local a = chunks[cx][cy].h
+	local b = chunks[cx+1][cy].v
+	local c = chunks[cx][cy+1].h
+	local d = chunks[cx][cy].v
+	
+	local lines = {}
+	local cons = {{a, b}, {b, c}, {c, d}, {d, a}, {a, c}, {b, d}}
+	
+	for i, con in pairs (cons) do
+		local first_side = con[1]
+		local second_side = con[2]
+		for j, from_point in pairs (first_side) do
+			for k, to_point in pairs (second_side) do
+				if from_point.value == to_point.value then
+					table.insert (lines, {from=from_point, to=to_point})
+				end
+			end
 		end
+	end
+	chunks[cx][cy].lines = lines
+end
+
+function remove_rendering (rendering_ids)
+	for i, id in pairs (rendering_ids) do
+		rendering.destroy(id)
+	end
+end
+
+function drawMLines (surface, cx, cy)
+	local color = {0,1,1}
+	local chunk = global.chunks[cx][cy]
+	
+	remove_rendering (chunk.line_ids)
+	
+	local lines = chunk.lines
+--	game.print ('cx:'..cx..' cy:'..cy..' lines:'..#lines)
+	if lines then
+		for i, line in pairs (lines) do
+			local from=line.from
+			local to=line.to
+			local line_id = rendering.draw_line{color=color, width=1, surface=surface, from=from, to=to}
+			table.insert (chunk.line_ids, line_id)
+		end
+	end
+end
+
+function update_isolines(surface, levels, cx, cy)
+	local mpoints = genMPoints (levels, cx, cy)
+
+	drawMPoints(surface, cx, cy)
+	
+	genMLines (cx, cy)
+	
+	drawMLines(surface, cx, cy)
+	
+	for i, pos in pairs ({
+		{-1,-1}, { 0,-1},{0,-1},
+		{-1, 0}, 		 { 1,0},
+		{-1, 1}, { 0, 1},{ 1,1},
+		}) do
+		genMLines (cx+pos[1], cy+pos[2])
+		drawMLines (surface, cx+pos[1], cy+pos[2])
 	end
 end
 
@@ -247,13 +362,16 @@ function smog.tick() -- no arguments in tick
 	if not global.chunks[cx] then global.chunks[cx] = {} end
 	
 	local udata = get_udata (surface, cx, cy)
-	local data = get_data (surface, udata, cx, cy)
+--	local data = set_data (surface, udata, cx, cy)
+	set_data (surface, udata, cx, cy)
 	local levels = get_levels ()
 	
-	local mpoints = genMPoints (data, levels, cx, cy)
+	update_isolines(surface, levels, cx, cy)
 	
-	drawMPoints(surface, mpoints)
-	drawLines(surface, mpoints)
+	
+	
+	
+	
 	
 end
 
