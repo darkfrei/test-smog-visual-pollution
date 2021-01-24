@@ -82,8 +82,8 @@ end
 
 function get_chunk_pollution (surface, cx, cy)
 	local pollution = surface.get_pollution({cx*32,cy*32})
-	local color = {1,1,1}
-	rendering.draw_text{text=pollution, surface=surface, target={cx*32+16,cy*32+16}, color=color, time_to_live=time_to_live}
+--	local color = {1,1,1}
+--	rendering.draw_text{text=pollution, surface=surface, target={cx*32+16,cy*32+16}, color=color, time_to_live=time_to_live}
 	return pollution
 end
 
@@ -93,7 +93,12 @@ function new_chunk ()
 		pollution = nil, 
 		h={}, -- horizontal top values
 		v={}, -- vertical left values
-		point_ids={}, -- 
+--		udata_value=0, -- chunk pollution
+--		udata_ids={},
+		data_value=0, -- avarage top left edge chunks pollution
+--		data_ids={},
+		h_point_ids={}, -- 
+		v_point_ids={}, -- 
 		line_ids={}, -- 
 		polygon_ids={}, -- 
 	}
@@ -103,6 +108,7 @@ end
 function get_udata (surface, cx, cy)
 	-- udata is vanilla values
 	local udata = {}
+	local summ_p=0
 	for i=1, 3 do -- as y
 		for j=1, 3 do -- as x
 			local cx1 = cx+j-2
@@ -113,6 +119,7 @@ function get_udata (surface, cx, cy)
 				global.chunks[cx1][cy1]=global.chunks[cx1][cy1]or new_chunk ()
 				global.chunks[cx1][cy1].pollution=pollution
 				pollution = get_chunk_pollution (surface, cx1, cy1) -- from cx-1 to cx+1
+				summ_p=summ_p+pollution
 				global.chunks[cx1][cy1].pollution=pollution
 				udata[j]=udata[j]or{}
 				udata[j][i]=pollution
@@ -121,6 +128,7 @@ function get_udata (surface, cx, cy)
 				and global.chunks[cx1][cy1].pollution) then
 				
 				pollution = get_chunk_pollution (surface, cx1, cy1)
+				summ_p=summ_p+pollution
 --				game.print('added chunk: '..cx1..' '..cy1..' '..pollution)
 				global.chunks[cx1]=global.chunks[cx1]or{}
 				global.chunks[cx1][cy1]=global.chunks[cx1][cy1]or new_chunk ()
@@ -129,13 +137,14 @@ function get_udata (surface, cx, cy)
 				udata[j][i]=pollution
 			else
 				pollution=global.chunks[cx1][cy1].pollution
+				summ_p=summ_p+pollution
 				udata[j]=udata[j]or{}
 				udata[j][i]=pollution
 			end
 
 		end
 	end
-	return udata
+	return udata, (summ_p==0)
 end
 
 function set_data (surface, udata, cx, cy)
@@ -151,8 +160,8 @@ function set_data (surface, udata, cx, cy)
 			local y = cy1*32+16
 			local value = (udata[i][j]+udata[i+1][j]+udata[i][j+1]+udata[i+1][j+1])/4
 --			data[i][j]=value
-			rendering.draw_text{text=value, surface=surface, target={x,y}, 
-				color=color, time_to_live=time_to_live}
+--			rendering.draw_text{text=value, surface=surface, target={x,y}, 
+--				color=color, time_to_live=time_to_live}
 			chunks[cx1][cy1].vertex_pollution = value
 --			game.print ('chunks cx1'..cx1..' cy1'..cy1..' value'..value)
 		end
@@ -160,23 +169,19 @@ function set_data (surface, udata, cx, cy)
 --	return data
 end
 
-function get_levels ()
+function set_levels ()
+	local mm=settings.global['svp-min-pollution'].value 
+	local mx=settings.global['svp-max-pollution'].value
+	local levels_amount=100
+	local step = (mx-mm)/levels_amount
 	local levels = {}
-	levels[#levels+1]=0
-	levels[#levels+1]=0.1
-	local k = 10^(1/10)
-	for i = 1, 1000 do
-		local level =k^i
-		if (level > 10) then
-			if (level < 100) then
-				level = math.floor ((level+0.5)*10)/10
-			else
-				level = math.floor ((level+0.5))
-			end
-		end
-		levels[#levels+1] = level
+--	levels[#levels+1]=0
+--	levels[#levels+1]=0.1
+	
+	for i = mm, mx, step do
+		levels[#levels+1] = i
 	end
-	return levels
+	global.levels = levels
 end
 
 function in_range ( value, min, max)
@@ -194,7 +199,8 @@ function as (a, b)
 	return (math.floor (a*1000) == math.floor (b*1000)) and true or false
 end
 
-function genMPoints(levels, cx, cy)
+function genMPoints(cx, cy)
+	local levels = global.levels
 --	game.print ('cy:'..cy)
 	local chunks = global.chunks
 	local a = chunks[cx][cy].vertex_pollution
@@ -264,19 +270,80 @@ end
 function drawMPoints(surface, cx, cy)
 	local color = {1,1,1}
 	local chunks = global.chunks
-	local a = chunks[cx][cy].h
-	local b = chunks[cx+1][cy].v
-	local c = chunks[cx][cy+1].h
-	local d = chunks[cx][cy].v
+	local a = {chunk=chunks[cx][cy], 	letter='h'}
+	local b = {chunk=chunks[cx+1][cy], 	letter='v'}
+	local c = {chunk=chunks[cx][cy+1], 	letter='h'}
+	local d = {chunk=chunks[cx][cy], 	letter='v'}
 	for i, side in pairs ({a,b,c,d}) do
-		for i, point in pairs (side) do
+		local chunk = side.chunk
+		local letter = side.letter
+		local point_ids
+		if letter == "h" then
+			chunk.h_point_ids = chunk.h_point_ids or {} -- for test, must remove
+			remove_rendering (chunk.h_point_ids or {})
+			point_ids = chunk.h_point_ids
+		else
+			chunk.v_point_ids = chunk.v_point_ids or {} -- for test, must remove
+			remove_rendering (chunk.v_point_ids or {})
+			point_ids = chunk.v_point_ids
+		end
+		
+		local points = chunk[letter] -- side, v or h
+		for i, point in pairs (points) do
+			
 			local x = point.x
 			local y = point.y
 			local value = point.value
-			rendering.draw_circle{color=color, radius=0.25, surface=surface, target={x,y}, time_to_live=time_to_live}
-			rendering.draw_text{text=value, surface=surface, target={x,y}, color=color, time_to_live=time_to_live}
+			local circle_id = rendering.draw_circle{color=color, radius=0.25, surface=surface, target={x,y}}
+			local text_id = rendering.draw_text{text=value, surface=surface, target={x,y}, color=color}
+			point_ids[#point_ids+1] = circle_id
+			point_ids[#point_ids+1] = text_id
 		end
 	end
+end
+
+function shortest_line_index (lines)
+	local index, sqlenght
+	
+	for i, line in pairs (lines) do
+--		game.print('line:'..serpent.line(line))
+		local qlenght = (line.from.x-line.to.x)^2+(line.from.y-line.to.y)^2
+		if not sqlenght then
+			sqlenght = qlenght
+			index = i
+		elseif qlenght < sqlenght then
+			sqlenght = qlenght
+			index = i
+		end
+		sqlenght = sqlenght and math.min(sqlenght, qlenght) or qlenght
+	end
+	
+	return index
+end
+
+function find_free_line (lines, s_line)
+	for i, line in pairs (lines) do
+		local fl = true
+		for j, a in pairs (line) do
+			for k, b in pairs (s_line) do
+				if as (a.x, b.x) and as (a.y, b.y) then
+					fl = false
+				end
+			end
+		end
+		if fl then
+			return line
+		end
+	end
+end
+
+function optimize_6_lines (lines)
+	local s_index = shortest_line_index (lines)
+	local s_line = lines[s_index]
+	table.remove(lines, s_index)
+	local f_line = find_free_line (lines, s_line)
+	
+	return {s_line, f_line}
 end
 
 
@@ -291,17 +358,46 @@ function genMLines (cx, cy, levels)
 	local lines = {}
 	local cons = {{a, b}, {b, c}, {c, d}, {d, a}, {a, c}, {b, d}}
 	
+	local mlines = {} -- structured lines
+	
 	for i, con in pairs (cons) do
 		local first_side = con[1]
 		local second_side = con[2]
 		for j, from_point in pairs (first_side) do
 			for k, to_point in pairs (second_side) do
 				if from_point.value == to_point.value then
-					table.insert (lines, {from=from_point, to=to_point})
+					local value = from_point.value
+					local line = {from=from_point, to=to_point}
+					mlines[value]=mlines[value] or {}
+					mlines[value][#mlines[value]+1] = line
+					table.insert (lines, line)
 				end
 			end
 		end
 	end
+	
+	for value, lines in pairs (mlines) do
+		if #lines == 6 then
+			game.print('was:	' .. ' cx:'..cx..' cy:'..cy..' #lines:' .. #lines)
+			lines = optimize_6_lines (lines)
+			mlines[value] = lines
+			game.print('now:	' .. ' cx:'..cx..' cy:'..cy..' #lines:' .. #lines)
+		end
+		
+		if #lines > 2 then
+--			game.print('cx:'..cx..' cy:'..cy..' #lines:' .. #lines)
+		end
+	end
+	
+	lines = {}
+	
+	for value, new_lines in pairs (mlines) do
+		for i, line in pairs (new_lines) do
+--			lines[#lines+1]=line
+			table.insert (lines, line)
+		end
+	end
+	
 	chunks[cx][cy].lines = lines
 end
 
@@ -329,8 +425,8 @@ function drawMLines (surface, cx, cy)
 	end
 end
 
-function update_isolines(surface, levels, cx, cy)
-	local mpoints = genMPoints (levels, cx, cy)
+function update_isolines(surface, cx, cy)
+	local mpoints = genMPoints (cx, cy)
 
 	drawMPoints(surface, cx, cy)
 	
@@ -348,6 +444,34 @@ function update_isolines(surface, levels, cx, cy)
 	end
 end
 
+function draw_udata_points (surface, cx,cy)
+	local chunk = global.chunks[cx][cy]
+	local color = {1,1,1}
+--	local color = {1,1,0}
+	if chunk.udata_id then
+		rendering.destroy(chunk.udata_id)
+	end
+	local pollution = math.floor(chunk.pollution+0.5)
+--	local pollution = chunk.vertex_pollution
+	local x, y = cx*32+16, cy*32+16
+	local id = rendering.draw_text{text=pollution, surface=surface, target={x=x,y=y}, color=color}
+	chunk.udata_id = id
+end
+
+function draw_data_points (surface, cx,cy)
+	local chunk = global.chunks[cx][cy]
+--	local color = {1,1,1}
+	local color = {1,1,0}
+	if chunk.data_id then
+		rendering.destroy(chunk.data_id)
+	end
+--	local pollution = chunk.pollution
+	local pollution = math.floor(chunk.vertex_pollution+0.5)
+	local x, y = cx*32, cy*32
+	local id = rendering.draw_text{text=pollution, surface=surface, target={x=x,y=y}, color=color}
+	chunk.data_id = id
+end
+
 function smog.tick() -- no arguments in tick
 	local surface = game.surfaces[1]
 	local chunk = surface.get_random_chunk()
@@ -361,12 +485,28 @@ function smog.tick() -- no arguments in tick
 	if not global.chunks then global.chunks = {} end
 	if not global.chunks[cx] then global.chunks[cx] = {} end
 	
-	local udata = get_udata (surface, cx, cy)
+	
+	local udata, is_empty = get_udata (surface, cx, cy)
+	local c = global.chunks[cx][cy]
+	if is_empty and c.was_empty then 
+		return 
+	elseif is_empty then
+		c.was_empty = true
+	else
+		c.was_empty = false
+	end
+	
 --	local data = set_data (surface, udata, cx, cy)
 	set_data (surface, udata, cx, cy)
-	local levels = get_levels ()
 	
-	update_isolines(surface, levels, cx, cy)
+	if not global.levels then
+		set_levels ()
+	end
+	
+	draw_udata_points (surface, cx,cy)
+	draw_data_points (surface, cx,cy)
+	
+	update_isolines(surface, cx, cy)
 	
 	
 	
